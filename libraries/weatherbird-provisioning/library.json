@@ -1,0 +1,24 @@
+{
+  "name": "weatherbird-provisioning",
+
+  "version": "0.0.1",
+
+  "keywords": "arduino, esp32, firebase, weather",
+
+  "description": "Provisioning a WeatherBird Station through local or internet connected access.  Provisions the WiFi and the FireBase user.",
+  "repository":
+  {
+    "type": "git",
+    "url": "https://github.com/goneall/weatherbird-provisioning"
+  },
+  "authors":
+  [
+    {
+        "name": "goneall",
+        "email": "gary@sourceauditor.com",
+        "maintainer": true
+    }
+  ],
+  "frameworks": "arduino",
+  "platforms": "espressif32"
+}
