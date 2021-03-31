@@ -45,10 +45,20 @@ WeatherBirdProvisioningManager* provisioningManager;
 
 BH1750 lightMeter(0x23); //0x23
 DHT12 dht12(DHT12_PIN, true);
-AsyncWebServer server(80);
+//AsyncWebServer server(80);
 //Button2 button(BOOT_PIN);
 //Button2 useButton(USER_BUTTON);
 WiFiMulti multi;
+
+/**
+ * Station configuration information
+ */
+int minSoilThreshold = 10;  // Minimum threshold before turning on water
+int maxSoilThreshold = 20;  // Max threshold before turning on water
+bool waterEnabled = true;
+const String minSoilPath = "/soilmin";
+const String maxSoilPath = "/soilmax";
+const String waterEnabledPath = "/water_enabled";
 
 void sleepHandler(Button2 &b)
 //TODO: Probably need to change the button on this - conflicts
@@ -73,8 +83,103 @@ boolean startFirebase() {
   firebaseConfig.api_key = FIREBASE_API_KEY;
   firebaseAuth.user.email = provisioningManager->getStationEmail();
   firebaseAuth.user.password = provisioningManager->getStationPassword();
-  return firebase->begin();
+  return firebase->begin(settingsStreamCallback);
 }
+
+/**
+ * Callback for when the settings data changes
+ */
+void settingsStreamCallback(StreamData data) {
+  if (data.dataPath() == minSoilPath) {
+    if (data.dataType() == "int") {
+      minSoilThreshold = data.intData();
+      Serial.print(F("Soil min updated to "));
+      Serial.println(minSoilThreshold);
+    } else {
+      Serial.println(F("Invalid data type for min soil path"));
+    }
+  } else if (data.dataPath() == maxSoilPath) {
+    if (data.dataType() == "int") {
+      maxSoilThreshold = data.intData();
+      Serial.print(F("Soil max updated to "));
+      Serial.println(maxSoilThreshold);
+    } else {
+      Serial.println(F("Invalid data type for max soil path"));
+    }
+  } else if (data.dataPath() == waterEnabledPath) {
+    if (data.dataType() == "boolean") {
+      waterEnabled = data.boolData();
+      Serial.print(F("Water enabled updated to "));
+      Serial.println(waterEnabled);
+    } else {
+      Serial.println(F("Invalid data type for water enabled path"));
+    }
+  } else if (data.dataPath() == "/") {
+    if (data.dataType() == "json") {
+      FirebaseJson &json = data.jsonObject();
+      String jsonStr;
+      json.toString(jsonStr, true);
+      Serial.println(jsonStr);
+      FirebaseJsonData jsonData;
+      json.get(jsonData, minSoilPath);
+      if (jsonData.typeNum == FirebaseJson::JSON_INT) {
+        minSoilThreshold = jsonData.intValue;
+        Serial.print(F("Soil min updated to "));
+        Serial.println(minSoilThreshold);
+      } else {
+        Serial.println("Invalid json type for minValue");
+      }
+      json.get(jsonData, maxSoilPath);
+      if (jsonData.typeNum == FirebaseJson::JSON_INT) {
+        maxSoilThreshold = jsonData.intValue;
+        Serial.print(F("Soil max updated to "));
+        Serial.println(maxSoilThreshold);
+      } else {
+        Serial.println("Invalid json type for maxValue");
+      }
+      json.get(jsonData, waterEnabledPath);
+      if (jsonData.typeNum == FirebaseJson::JSON_BOOL) {
+        waterEnabled = jsonData.boolValue;
+        Serial.print(F("Water enabled updated to "));
+        Serial.println(waterEnabled);
+      } else {
+        Serial.println(F("Invalid data type for water enabled path"));
+      }
+    } else {
+      Serial.println(F("Invalid data type for root soil path"));
+    }
+  } else {
+    Serial.print("Unexpected path for update: ");
+    Serial.println(data.dataPath());
+  }
+}
+/**
+ * Updates the soil sensor min and max from the Firebase soil sensor data
+ */
+//void updateSoilMinMax() {
+//  FirebaseJson json;
+//  if (firebase->getSensorMetadata("soil", json)) {
+//    FirebaseJsonData jsonData;
+//    json.get(jsonData, minSoilPath);
+//    if (jsonData.typeNum == 4) {
+//      minSoilThreshold = jsonData.intValue;
+//      Serial.print(F("Soil min updated to "));
+//      Serial.println(minSoilThreshold);
+//    } else {
+//      Serial.println("Invalid json type for minValue");
+//    }
+//    json.get(jsonData, maxSoilPath);
+//    if (jsonData.typeNum == 4) {
+//      maxSoilThreshold = jsonData.intValue;
+//      Serial.print(F("Soil max updated to "));
+//      Serial.println(maxSoilThreshold);
+//    } else {
+//      Serial.println("Invalid json type for maxValue");
+//    }
+//  } else {
+//    Serial.println("Unable to update soil min/max");
+//  }
+//}
 
 void setup()
 {
@@ -101,7 +206,11 @@ void setup()
     digitalWrite(POWER_CTRL, 1);
     delay(1000);
 
-    if (lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE)) {
+    int retries = 0;
+    while (retries < 5 && !lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE)) {
+      retries++;
+    }
+    if (retries < 5) {
         Serial.println(F("BH1750 Advanced begin"));
     } else {
         Serial.println(F("Error initialising BH1750"));
@@ -148,20 +257,25 @@ long millsSinceWaterChange = millis();
  * Check to see if the water relay needs to be turned on or off
  */
 void checkForWater(uint16_t soil) {
-  //TODO Implement
-  // TEMP for testing
   if (millis() - millsSinceWaterChange > MILLIS_WAIT_WATER) {
     millsSinceWaterChange = millis();
     Serial.print("Soil=");
-    Serial.println(soil);
-    if (waterOn) {
-      Serial.println("Turning water on");
-      digitalWrite(WATER_RELAY_PIN, LOW);
-    } else {
+    Serial.print(soil);
+    Serial.print(", waterOn=");
+    Serial.print(waterOn);
+    Serial.print(", min=");
+    Serial.print(minSoilThreshold);
+    Serial.print(", max=");
+    Serial.println(maxSoilThreshold);
+    if (waterOn && (soil > maxSoilThreshold || !waterEnabled)) {
       Serial.println("Turning water off");
       digitalWrite(WATER_RELAY_PIN, HIGH);
+      waterOn = false;
+    } else if (!waterOn && soil < minSoilThreshold && waterEnabled) {
+      Serial.println("Turning water on");
+      digitalWrite(WATER_RELAY_PIN, LOW);
+      waterOn = true;
     }
-    waterOn = !waterOn;
   }
 }
 

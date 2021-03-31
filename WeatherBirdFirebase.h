@@ -21,6 +21,11 @@
 class WeatherBirdFirebase {
   public:
   
+  /**
+   * config - Firebase configuration (see FirebaseESP32.h)
+   * auth - Authentication information for logging into Firebase.  Username and password for authentication
+   *        can be obtained from the FirebaseProvisioning library getStationEmail and getStationPassword
+   */
   WeatherBirdFirebase(FirebaseConfig *config, FirebaseAuth *auth, String stationId) {
     firebaseAuth = auth;
     firebaseConfig = config;
@@ -28,13 +33,18 @@ class WeatherBirdFirebase {
   };
 
   /**
-   * Start the Firebase Connection
-   * config - Firebase configuration (see FirebaseESP32.h)
-   * auth - Authentication information for logging into Firebase.  Username and password for authentication
-   *        can be obtained from the FirebaseProvisioning library getStationEmail and getStationPassword
+   * Start the Firebase Connection with no settingsStreamCallback
    * returns true if successful, false if there was an error
    */
   bool begin() {
+    begin(defaultSettingsStreamCallback);
+  }
+  /**
+   * Start the Firebase Connection
+   * settingsStreamCallback callback to be used if the settings stream changes
+   * returns true if successful, false if there was an error
+   */
+  bool begin(FirebaseData::StreamEventCallback settingsStreamCallback) {
     if (WiFi.status() != WL_CONNECTED) {
       WBF_LOGERROR(F("Can not begin - not connected to WiFi"));
       _running = false;
@@ -68,23 +78,56 @@ class WeatherBirdFirebase {
     } else {
       WBF_LOGINFO(F("Successfully authenticated to Firebase"));
       _running = true;
+      Firebase.setStreamCallback(firebaseSettingsData, settingsStreamCallback, streamTimeoutCallback);
+      String settingsPath = "/stations/" + firebaseStationId + "/settings";
+      if (Firebase.beginStream(firebaseSettingsData, settingsPath)) {
+        _lastError = "";
+      } else {
+        _lastError = firebaseSettingsData.errorReason().c_str();
+        WBF_LOGERROR1(F("Error starting stream for settings update "), firebaseSettingsData.errorReason());
+        // This always errors - but it seems to work in reading the stream
+      }
       waitForSync();    // Sync the time to NTP
       WBF_LOGINFO1(F("UTC: "), UTC.dateTime());
-      _lastError = "";
     }
     return _running;
+  }
+
+  /**
+   * Callback for timeout on the settings stream
+   */
+  static void streamTimeoutCallback(bool timeout)
+  {
+    if(timeout){
+      Serial.println(F("Stream timeout, resume streaming..."));
+    }  
+  }
+  
+  /**
+   * Default for when the settings data changes
+   */
+  static void defaultSettingsStreamCallback(StreamData data) {
+    WBF_LOGDEBUG1(F("Settings have changed for path "), data.dataPath());
   }
 
   /**
    * Ends the connection to Firebase and frees all resources
    */
   void end() {
+    if (!_running) {
+      WBF_LOGERROR(F("No end - firebase not running"));
+    }
+    Firebase.endStream(firebaseSettingsData);
     Firebase.end(firebaseData);
     _running = false;
     WBF_LOGINFO(F("Ending Firebase Connection"));
   }
 
   bool updateSensorValue(String sensorName, float value) {
+    if (!_running) {
+      WBF_LOGERROR(F("Cannot update sensor value - firebase not running"));
+      return false;
+    }
     String datetime = UTC.dateTime("Y-m-d\\TH:i:s\\Z");
     String last_update_value = "/stations/" + firebaseStationId + "/last_update/" + sensorName + "/value";
     WBF_LOGDEBUG(last_update_value);
@@ -103,9 +146,31 @@ class WeatherBirdFirebase {
     }
   }
 
+  /**
+   * Fetches sensor metadata
+   */
+//  bool getSensorMetadata(const String &sensorId, FirebaseJson &json) {
+//    String sensorPath = "/sensors/" + sensorId;
+//    WBF_LOGDEBUG(sensorPath);
+//    if (Firebase.get(firebaseData, sensorPath)) {
+//      if (firebaseData.dataType() == "json") {
+//        json = firebaseData.jsonObject();
+//        WBF_LOGDEBUG(F("Successful sensor get"));
+//        return true;
+//      } else {
+//        WBF_LOGERROR(F("Invalid data type for sensor get"));
+//        return false;
+//      }
+//    } else {
+//      WBF_LOGERROR("Could not get sensor data");
+//      return false;
+//    }
+//  }
+
   private:
   bool _running = false;  // begin was successfully called
-  FirebaseData firebaseData;
+  FirebaseData firebaseData;  // Used for generic requests
+  FirebaseData firebaseSettingsData; // Used for reading station settings
   FirebaseAuth *firebaseAuth;
   FirebaseConfig *firebaseConfig;
   String firebaseStationId;
