@@ -1,10 +1,10 @@
 #include <algorithm>
 #include <iostream>
 #include <Arduino.h>
-#include <Button2.h>
 #include <Wire.h>
 #include <BH1750.h>
 #include <DHT12.h>
+#include <Adafruit_BME280.h>
 #include <WiFiMulti.h>
 #include "esp_wifi.h"
 #include "secret.h"
@@ -44,12 +44,10 @@ WeatherBirdProvisioningManager* provisioningManager;
 #define MILLIS_WAIT_WATER   10000                // Millis to wait before changing the water relay
 
 BH1750 lightMeter(0x23); //0x23
+Adafruit_BME280 bmp;     //0x77
 DHT12 dht12(DHT12_PIN, true);
-//AsyncWebServer server(80);
-//Button2 button(BOOT_PIN);
-//Button2 useButton(USER_BUTTON);
-WiFiMulti multi;
 
+bool bme_found = false;
 /**
  * Station configuration information
  */
@@ -60,15 +58,13 @@ const String minSoilPath = "/soilmin";
 const String maxSoilPath = "/soilmax";
 const String waterEnabledPath = "/water_enabled";
 
-void sleepHandler(Button2 &b)
-//TODO: Probably need to change the button on this - conflicts
-{
+//void sleepHandler(Button2 &b)
+//{
 //    Serial.println("Enter Deepsleep ...");
 //    esp_sleep_enable_ext1_wakeup(GPIO_SEL_35, ESP_EXT1_WAKEUP_ALL_LOW);
 //    delay(1000);
 //    esp_deep_sleep_start();
-}
-
+//}
 /**
  * Starts the firebase service
  * Returns true if successful
@@ -153,34 +149,6 @@ void settingsStreamCallback(StreamData data) {
     Serial.println(data.dataPath());
   }
 }
-/**
- * Updates the soil sensor min and max from the Firebase soil sensor data
- */
-//void updateSoilMinMax() {
-//  FirebaseJson json;
-//  if (firebase->getSensorMetadata("soil", json)) {
-//    FirebaseJsonData jsonData;
-//    json.get(jsonData, minSoilPath);
-//    if (jsonData.typeNum == 4) {
-//      minSoilThreshold = jsonData.intValue;
-//      Serial.print(F("Soil min updated to "));
-//      Serial.println(minSoilThreshold);
-//    } else {
-//      Serial.println("Invalid json type for minValue");
-//    }
-//    json.get(jsonData, maxSoilPath);
-//    if (jsonData.typeNum == 4) {
-//      maxSoilThreshold = jsonData.intValue;
-//      Serial.print(F("Soil max updated to "));
-//      Serial.println(maxSoilThreshold);
-//    } else {
-//      Serial.println("Invalid json type for maxValue");
-//    }
-//  } else {
-//    Serial.println("Unable to update soil min/max");
-//  }
-//}
-
 void setup()
 {
     Serial.begin(115200);
@@ -193,10 +161,6 @@ void setup()
     if (startFirebase()) {
       Serial.println("Firebase successfully started");
     }
-
-//    button.setLongClickHandler(smartConfigStart);
-//    useButton.setLongClickHandler(sleepHandler);
-
     Wire.begin(I2C_SDA, I2C_SCL);
 
     dht12.begin();
@@ -206,17 +170,20 @@ void setup()
     digitalWrite(POWER_CTRL, 1);
     delay(1000);
 
-    int retries = 0;
-    while (retries < 5 && !lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE)) {
-      retries++;
+    if (!bmp.begin()) {
+      // Don't remove the bmp code - it messes up the lightMeter code for some reason ?!?
+        Serial.println(F("Could not find a valid BMP280 sensor, check wiring!"));
+        bme_found = false;
+    } else {
+        bme_found = true;
     }
-    if (retries < 5) {
+
+    if (lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE)) {
         Serial.println(F("BH1750 Advanced begin"));
     } else {
         Serial.println(F("Error initialising BH1750"));
     }
 }
-
 
 uint32_t readSalt()
 {
