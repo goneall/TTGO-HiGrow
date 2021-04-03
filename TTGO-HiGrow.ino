@@ -10,7 +10,7 @@
 #include "secret.h"
 
 #define WBP_DEBUG_OUTPUT      Serial
-
+#define CORE_DEBUG_LEVEL=5
 #define _WBP_LOGLEVEL_        4
 #define _WBF_LOGLEVEL_        4
 #define LED_BUILTIN       16         // GPIO 16 for the TTGO-HiGrow
@@ -153,6 +153,7 @@ void setup()
 {
     Serial.begin(115200);
     delay(200);
+    esp_log_level_set("*", ESP_LOG_DEBUG);
     pinMode(WATER_RELAY_PIN, OUTPUT);
     digitalWrite(WATER_RELAY_PIN, HIGH);
     provisioningManager = new WeatherBirdProvisioningManager(FIREBASE_FUNCTION_URL, LED_BUILTIN, CONFIG_BUTTON);
@@ -226,14 +227,17 @@ long millsSinceWaterChange = millis();
 void checkForWater(uint16_t soil) {
   if (millis() - millsSinceWaterChange > MILLIS_WAIT_WATER) {
     millsSinceWaterChange = millis();
-    Serial.print("Soil=");
+    Serial.print(F("Soil="));
     Serial.print(soil);
-    Serial.print(", waterOn=");
+    Serial.print(F(", waterOn="));
     Serial.print(waterOn);
-    Serial.print(", min=");
+    Serial.print(F(", min="));
     Serial.print(minSoilThreshold);
-    Serial.print(", max=");
+    Serial.print(F(", max="));
     Serial.println(maxSoilThreshold);
+    //DEBUGGING
+    Serial.print(F("Memory available: "));
+    Serial.println(ESP.getFreeHeap());
     if (waterOn && (soil > maxSoilThreshold || !waterEnabled)) {
       Serial.println("Turning water off");
       digitalWrite(WATER_RELAY_PIN, HIGH);
@@ -253,6 +257,7 @@ void loop()
 //    button.loop();
 //    useButton.loop();
     provisioningManager->loop();
+    firebase->loop();
     uint16_t soil = readSoil();
     checkForWater(soil);
     if (millis() - timestamp > FIREBASE_UPDATE_DELAY  &&

@@ -146,26 +146,9 @@ class WeatherBirdFirebase {
     }
   }
 
-  /**
-   * Fetches sensor metadata
-   */
-//  bool getSensorMetadata(const String &sensorId, FirebaseJson &json) {
-//    String sensorPath = "/sensors/" + sensorId;
-//    WBF_LOGDEBUG(sensorPath);
-//    if (Firebase.get(firebaseData, sensorPath)) {
-//      if (firebaseData.dataType() == "json") {
-//        json = firebaseData.jsonObject();
-//        WBF_LOGDEBUG(F("Successful sensor get"));
-//        return true;
-//      } else {
-//        WBF_LOGERROR(F("Invalid data type for sensor get"));
-//        return false;
-//      }
-//    } else {
-//      WBF_LOGERROR("Could not get sensor data");
-//      return false;
-//    }
-//  }
+  void loop() {
+    events();  // This is for the timer facility
+  }
 
   private:
   bool _running = false;  // begin was successfully called
