@@ -1,15 +1,15 @@
 /**
- * Google's Firebase Data class, FB_Session.cpp version 1.0.4
+ * Google's Firebase Data class, FB_Session.cpp version 1.0.7
  * 
  * This library supports Espressif ESP8266 and ESP32
  * 
- * Created March 11, 2021
+ * Created April 1, 2021
  * 
  * This work is a part of Firebase ESP Client library
- * Copyright (c) 2020, 2021 K. Suwatchai (Mobizt)
+ * Copyright (c) 2021 K. Suwatchai (Mobizt)
  * 
  * The MIT License (MIT)
- * Copyright (c) 2020, 2021 K. Suwatchai (Mobizt)
+ * Copyright (c) 2021 K. Suwatchai (Mobizt)
  * 
  * 
  * Permission is hereby granted, free of charge, to any person returning a copy of
@@ -115,7 +115,7 @@ void FirebaseData::setResponseSize(uint16_t len)
 
 bool FirebaseData::pauseFirebase(bool pause)
 {
-    if (WiFi.status() != WL_CONNECTED)
+    if (WiFi.status() != WL_CONNECTED && !ut->ethLinkUp())
         return false;
 
     if (httpClient.connected() && pause != _ss.rtdb.pause)
@@ -338,30 +338,28 @@ FirebaseJsonArray *FirebaseData::jsonArrayPtr()
 
     if (_ss.rtdb.data.length() > 0 && _ss.rtdb.resp_data_type == fb_esp_data_type::d_array)
     {
-        char *tmp = ut->newS(20);
 
-        std::string().swap(_ss.arr._json._jsonData._dbuf);
-        std::string().swap(_ss.arr._json._tbuf);
+        std::string().swap(*_ss.arr.int_dbuf());
+        std::string().swap(*_ss.arr.int_tbuf());
 
-        strcpy_P(tmp, FirebaseJson_STR_21);
-        _ss.arr._json._toStdString(_ss.arr._jbuf, false);
-        _ss.arr._json._rawbuf = tmp;
-        _ss.arr._json._rawbuf += _ss.rtdb.data;
-
-        tmp = ut->newS(tmp, 20);
-        strcpy_P(tmp, FirebaseJson_STR_26);
-
-        _ss.arr._json._parse(tmp, FirebaseJson::PRINT_MODE_PLAIN);
-
-        std::string().swap(_ss.arr._json._tbuf);
-        std::string().swap(_ss.arr._jbuf);
-        _ss.arr._json.clearPathTk();
-        _ss.arr._json._tokens.reset();
-        _ss.arr._json._tokens = nullptr;
+        char *tmp = ut->strP(fb_json_str_21);
+        _ss.arr.int_json()->int_toStdString(*_ss.arr.int_jbuf());
+        *_ss.arr.int_rawbuf() = tmp;
+        *_ss.arr.int_rawbuf() += _ss.rtdb.data;
         ut->delS(tmp);
-        if (_ss.arr._json._jsonData._dbuf.length() > 2)
-            _ss.arr._json._rawbuf = _ss.arr._json._jsonData._dbuf.substr(1, _ss.arr._json._jsonData._dbuf.length() - 2);
-        _ss.arr._arrLen = _ss.arr._json._jsonData._len;
+
+        tmp = ut->strP(fb_json_str_26);
+        _ss.arr.int_json()->int_parse(tmp, FirebaseJson::PRINT_MODE_PLAIN);
+        ut->delS(tmp);
+
+        std::string().swap(*_ss.arr.int_tbuf());
+        std::string().swap(*_ss.arr.int_jbuf());
+        _ss.arr.int_json()->int_clearPathTk();
+        _ss.arr.int_json()->int_clearTokens();
+
+        if (_ss.arr.int_dbuf()->length() > 2)
+            *_ss.arr.int_rawbuf() = _ss.arr.int_dbuf()->substr(1, _ss.arr.int_dbuf()->length() - 2);
+        _ss.arr.int_set_arr_len(_ss.arr.int_json()->int_get_jsondata_len());
     }
     return &_ss.arr;
 }
@@ -563,7 +561,7 @@ int FirebaseData::httpCode()
 
 void FirebaseData::closeSession()
 {
-    if (WiFi.status() == WL_CONNECTED)
+    if (WiFi.status() == WL_CONNECTED || ut->ethLinkUp())
     {
         //close the socket and free the resources used by the BearSSL data
         if (_ss.connected || httpClient.stream())
@@ -587,7 +585,7 @@ void FirebaseData::closeSession()
 bool FirebaseData::reconnect(unsigned long dataTime)
 {
 
-    bool status = WiFi.status() == WL_CONNECTED;
+    bool status = WiFi.status() == WL_CONNECTED || ut->ethLinkUp();
 
     if (dataTime > 0)
     {
@@ -618,7 +616,7 @@ bool FirebaseData::reconnect(unsigned long dataTime)
             }
         }
 
-        status = WiFi.status() == WL_CONNECTED;
+        status = WiFi.status() == WL_CONNECTED || ut->ethLinkUp();
     }
 
     return status;
@@ -846,12 +844,16 @@ void FCMObject::setNotifyMessage(const String &title, const String &body)
 {
     if (!init())
         return;
-    char *key = _ut->strP(fb_esp_pgm_str_123);
-    _fcmPayload.set(key, title);
-    _ut->delS(key);
-    key = _ut->strP(fb_esp_pgm_str_124);
-    _fcmPayload.set(key, body);
-    _ut->delS(key);
+    std::string s;
+    _ut->appendP(s, fb_esp_pgm_str_122, true);
+    _ut->appendP(s, fb_esp_pgm_str_1);
+    _ut->appendP(s, fb_esp_pgm_str_285);
+    _fcmPayload.set(s.c_str(), title);
+
+    _ut->appendP(s, fb_esp_pgm_str_122, true);
+    _ut->appendP(s, fb_esp_pgm_str_1);
+    _ut->appendP(s, fb_esp_pgm_str_123);
+    _fcmPayload.set(s.c_str(), body);
 }
 
 void FCMObject::setNotifyMessage(const String &title, const String &body, const String &icon)
@@ -859,9 +861,12 @@ void FCMObject::setNotifyMessage(const String &title, const String &body, const 
     if (!init())
         return;
     setNotifyMessage(title, body);
-    char *key = _ut->strP(fb_esp_pgm_str_125);
-    _fcmPayload.set(key, icon);
-    _ut->delS(key);
+
+    std::string s;
+    _ut->appendP(s, fb_esp_pgm_str_122, true);
+    _ut->appendP(s, fb_esp_pgm_str_1);
+    _ut->appendP(s, fb_esp_pgm_str_124);
+    _fcmPayload.set(s.c_str(), icon);
 }
 
 void FCMObject::setNotifyMessage(const String &title, const String &body, const String &icon, const String &click_action)
@@ -869,9 +874,11 @@ void FCMObject::setNotifyMessage(const String &title, const String &body, const 
     if (!init())
         return;
     setNotifyMessage(title, body, icon);
-    char *key = _ut->strP(fb_esp_pgm_str_126);
-    _fcmPayload.set(key, click_action);
-    _ut->delS(key);
+    std::string s;
+    _ut->appendP(s, fb_esp_pgm_str_122, true);
+    _ut->appendP(s, fb_esp_pgm_str_1);
+    _ut->appendP(s, fb_esp_pgm_str_125);
+    _fcmPayload.set(s.c_str(), click_action);
 }
 
 void FCMObject::addCustomNotifyMessage(const String &key, const String &value)

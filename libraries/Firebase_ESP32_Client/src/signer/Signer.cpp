@@ -1,15 +1,15 @@
 /**
- * Google's Firebase Token Generation class, Signer.cpp version 1.0.4
+ * Google's Firebase Token Generation class, Signer.cpp version 1.0.7
  * 
  * This library supports Espressif ESP8266 and ESP32
  * 
- * Created March 14, 2021
+ * Created April 1, 2021
  * 
  * This work is a part of Firebase ESP Client library
- * Copyright (c) 2020, 2021 K. Suwatchai (Mobizt)
+ * Copyright (c) 2021 K. Suwatchai (Mobizt)
  * 
  * The MIT License (MIT)
- * Copyright (c) 2020, 2021 K. Suwatchai (Mobizt)
+ * Copyright (c) 2021 K. Suwatchai (Mobizt)
  * 
  * 
  * Permission is hereby granted, free of charge, to any person returning a copy of
@@ -207,7 +207,10 @@ bool Firebase_Signer::handleToken()
     if (config->host.length() == 0)
         return false;
 
-    if ((config->signer.tokens.token_type == token_type_id_token || config->signer.tokens.token_type == token_type_custom_token || config->signer.tokens.token_type == token_type_oauth2_access_token) && (millis() > config->signer.tokens.expires - config->signer.preRefreshMillis || config->signer.tokens.expires == 0))
+    if (config->signer.preRefreshSeconds > config->signer.tokens.expires)
+      config->signer.preRefreshSeconds = 60;
+
+    if ((config->signer.tokens.token_type == token_type_id_token || config->signer.tokens.token_type == token_type_custom_token || config->signer.tokens.token_type == token_type_oauth2_access_token) && ((unsigned long)time(nullptr) > config->signer.tokens.expires - config->signer.preRefreshSeconds || config->signer.tokens.expires == 0))
     {
         if (config->signer.tokens.expires > 0 && (config->signer.tokens.token_type == token_type_id_token || config->signer.tokens.token_type == token_type_custom_token))
         {
@@ -360,11 +363,9 @@ void Firebase_Signer::tokenProcessingTask()
 
             yield();
         }
-
-        vTaskDelete(NULL);
-
         _this->config->_int.token_processing_task_handle = NULL;
         _this->config->signer.tokenTaskRunning = false;
+        vTaskDelete(NULL);
     };
 
     char *taskname = ut->strP(fb_esp_pgm_str_546);
@@ -462,8 +463,12 @@ void Firebase_Signer::tokenProcessingTask()
 
 bool Firebase_Signer::refreshToken()
 {
-    if (WiFi.status() != WL_CONNECTED)
+    if (config->_int.fb_reconnect_wifi)
+        ut->reconnect(0);
+
+    if (WiFi.status() != WL_CONNECTED && !ut->ethLinkUp())
         return false;
+
     delay(0);
 
     if (auth == nullptr)
@@ -575,6 +580,11 @@ bool Firebase_Signer::refreshToken()
         }
 
         config->signer.tokens.error = error;
+        tokenInfo.status = config->signer.tokens.status;
+        tokenInfo.type = config->signer.tokens.token_type;
+        tokenInfo.error = config->signer.tokens.error;
+        if (error.code != 0)
+            sendTokenStatusCB();
 
         if (error.code == 0)
         {
@@ -596,7 +606,7 @@ bool Firebase_Signer::refreshToken()
                 config->signer.json->get(*config->signer.data, tmp);
                 ut->delS(tmp);
                 if (config->signer.data->success)
-                    config->signer.tokens.expires = millis() + (1000 * atoi(config->signer.data->stringValue.c_str()));
+                    config->signer.tokens.expires = time(nullptr) + atoi(config->signer.data->stringValue.c_str());
 
                 tmp = ut->strP(fb_esp_pgm_str_175);
                 config->signer.json->get(*config->signer.data, tmp);
@@ -745,7 +755,10 @@ void Firebase_Signer::sendTokenStatusCB()
 
 bool Firebase_Signer::handleTokenResponse()
 {
-    if (WiFi.status() != WL_CONNECTED)
+    if (config->_int.fb_reconnect_wifi)
+        ut->reconnect(0);
+
+    if (WiFi.status() != WL_CONNECTED && !ut->ethLinkUp())
         return false;
 
     struct server_response_data_t response;
@@ -776,7 +789,7 @@ bool Firebase_Signer::handleTokenResponse()
 #endif
     while (stream->connected() && stream->available() == 0)
     {
-        if (!reconnect(dataTime))
+        if (!ut->reconnect(dataTime))
         {
             if (stream)
                 if (stream->connected())
@@ -800,7 +813,11 @@ bool Firebase_Signer::handleTokenResponse()
             while (!complete)
             {
                 delay(0);
-                if (WiFi.status() != WL_CONNECTED)
+
+                if (config->_int.fb_reconnect_wifi)
+                    ut->reconnect(0);
+
+                if (WiFi.status() != WL_CONNECTED && !ut->ethLinkUp())
                 {
                     if (stream)
                         if (stream->connected())
@@ -958,7 +975,7 @@ bool Firebase_Signer::createJWT()
         ut->delS(tmp);
         ut->delS(tmp2);
 
-        config->signer.json->_tostr(config->signer.header);
+        config->signer.json->int_tostr(config->signer.header);
         size_t len = ut->base64EncLen(config->signer.header.length());
         char *buf = ut->newS(len);
         ut->encodeBase64Url(buf, (unsigned char *)config->signer.header.c_str(), config->signer.header.length());
@@ -1002,7 +1019,12 @@ bool Firebase_Signer::createJWT()
         ut->delS(tmp);
 
         tmp = ut->strP(fb_esp_pgm_str_215);
-        config->signer.json->add(tmp, (int)(now + 60 * 60));
+
+        if (config->signer.expiredSeconds > 3600)
+            config->signer.json->add(tmp, (int)(now + 3600));
+        else
+            config->signer.json->add(tmp, (int)(now + config->signer.expiredSeconds));
+
         ut->delS(tmp);
 
         if (config->signer.tokens.token_type == token_type_oauth2_access_token)
@@ -1064,7 +1086,7 @@ bool Firebase_Signer::createJWT()
             ut->delS(tmp);
 
             std::string s;
-            auth->token.claims._tostr(s);
+            auth->token.claims.int_tostr(s);
             if (s.length() > 2)
             {
                 tmp = ut->strP(fb_esp_pgm_str_255);
@@ -1073,7 +1095,7 @@ bool Firebase_Signer::createJWT()
             }
         }
 
-        config->signer.json->_tostr(config->signer.payload);
+        config->signer.json->int_tostr(config->signer.payload);
         len = ut->base64EncLen(config->signer.payload.length());
         buf = ut->newS(len);
         ut->encodeBase64Url(buf, (unsigned char *)config->signer.payload.c_str(), config->signer.payload.length());
@@ -1253,7 +1275,10 @@ bool Firebase_Signer::createJWT()
 
 bool Firebase_Signer::getIdToken(bool createUser, const char *email, const char *password)
 {
-    if (WiFi.status() != WL_CONNECTED)
+    if (config->_int.fb_reconnect_wifi)
+        ut->reconnect(0);
+
+    if (WiFi.status() != WL_CONNECTED && !ut->ethLinkUp())
         return false;
 
     config->signer.signup = false;
@@ -1401,7 +1426,8 @@ bool Firebase_Signer::getIdToken(bool createUser, const char *email, const char 
             tokenInfo.status = config->signer.tokens.status;
             tokenInfo.type = config->signer.tokens.token_type;
             tokenInfo.error = config->signer.tokens.error;
-            sendTokenStatusCB();
+            if (error.code != 0)
+                sendTokenStatusCB();
         }
 
         if (error.code == 0)
@@ -1429,7 +1455,7 @@ bool Firebase_Signer::getIdToken(bool createUser, const char *email, const char 
             config->signer.json->get(*config->signer.data, tmp);
             ut->delS(tmp);
             if (config->signer.data->success)
-                config->signer.tokens.expires = millis() + (1000 * atoi(config->signer.data->stringValue.c_str()));
+                config->signer.tokens.expires = time(nullptr) + atoi(config->signer.data->stringValue.c_str());
 
             tmp = ut->strP(fb_esp_pgm_str_175);
             config->signer.json->get(*config->signer.data, tmp);
@@ -1446,38 +1472,12 @@ bool Firebase_Signer::getIdToken(bool createUser, const char *email, const char 
     return handleSignerError(3);
 }
 
-bool Firebase_Signer::reconnect(unsigned long dataTime)
-{
-
-    bool status = WiFi.status() == WL_CONNECTED;
-
-    if (dataTime > 0)
-    {
-        if (millis() - dataTime > 30000)
-            return false;
-    }
-
-    if (!status)
-    {
-
-        if (config->_int.fb_reconnect_wifi)
-        {
-            if (millis() - config->_int.fb_last_reconnect_millis > config->_int.fb_reconnect_tmo)
-            {
-                WiFi.reconnect();
-                config->_int.fb_last_reconnect_millis = millis();
-            }
-        }
-
-        status = WiFi.status() == WL_CONNECTED;
-    }
-
-    return status;
-}
-
 bool Firebase_Signer::requestTokens()
 {
-    if (WiFi.status() != WL_CONNECTED)
+    if (config->_int.fb_reconnect_wifi)
+        ut->reconnect(0);
+
+    if (WiFi.status() != WL_CONNECTED && !ut->ethLinkUp())
         return false;
 
     delay(0);
@@ -1605,6 +1605,11 @@ bool Firebase_Signer::requestTokens()
         }
 
         config->signer.tokens.error = error;
+        tokenInfo.status = config->signer.tokens.status;
+        tokenInfo.type = config->signer.tokens.token_type;
+        tokenInfo.error = config->signer.tokens.error;
+        if (error.code != 0)
+            sendTokenStatusCB();
 
         if (error.code == 0)
         {
@@ -1626,7 +1631,7 @@ bool Firebase_Signer::requestTokens()
                 config->signer.json->get(*config->signer.data, tmp);
                 ut->delS(tmp);
                 if (config->signer.data->success)
-                    config->signer.tokens.expires = millis() + (1000 * atoi(config->signer.data->stringValue.c_str()));
+                    config->signer.tokens.expires = time(nullptr) + atoi(config->signer.data->stringValue.c_str());
             }
             else if (config->signer.tokens.token_type == token_type_oauth2_access_token)
             {
@@ -1646,7 +1651,7 @@ bool Firebase_Signer::requestTokens()
                 config->signer.json->get(*config->signer.data, tmp);
                 ut->delS(tmp);
                 if (config->signer.data->success)
-                    config->signer.tokens.expires = millis() + (1000 * atoi(config->signer.data->stringValue.c_str()));
+                    config->signer.tokens.expires = time(nullptr) + atoi(config->signer.data->stringValue.c_str());
             }
             return handleSignerError(0);
         }
@@ -1658,7 +1663,10 @@ bool Firebase_Signer::requestTokens()
 
 bool Firebase_Signer::handleEmailSending(const char *payload, fb_esp_user_email_sending_type type)
 {
-    if (WiFi.status() != WL_CONNECTED)
+    if (config->_int.fb_reconnect_wifi)
+        ut->reconnect(0);
+
+    if (WiFi.status() != WL_CONNECTED && !ut->ethLinkUp())
         return false;
 
     delay(0);
@@ -1810,7 +1818,11 @@ void Firebase_Signer::checkToken()
         return;
     if (config->host.length() == 0)
         return;
-    if ((config->signer.tokens.token_type == token_type_id_token || config->signer.tokens.token_type == token_type_custom_token || config->signer.tokens.token_type == token_type_oauth2_access_token) && (millis() > config->signer.tokens.expires - config->signer.preRefreshMillis || config->signer.tokens.expires == 0))
+
+    if (config->signer.preRefreshSeconds > config->signer.tokens.expires)
+      config->signer.preRefreshSeconds = 60;
+
+    if ((config->signer.tokens.token_type == token_type_id_token || config->signer.tokens.token_type == token_type_custom_token || config->signer.tokens.token_type == token_type_oauth2_access_token) && ((unsigned long)time(nullptr) > config->signer.tokens.expires - config->signer.preRefreshSeconds || config->signer.tokens.expires == 0))
         handleToken();
 }
 

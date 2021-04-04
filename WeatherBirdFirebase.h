@@ -30,21 +30,14 @@ class WeatherBirdFirebase {
     firebaseAuth = auth;
     firebaseConfig = config;
     firebaseStationId = stationId;
+    settingsPath = "/stations/" + firebaseStationId + "/settings";
   };
 
   /**
-   * Start the Firebase Connection with no settingsStreamCallback
+   * Start the Firebase Connection
    * returns true if successful, false if there was an error
    */
   bool begin() {
-    begin(defaultSettingsStreamCallback);
-  }
-  /**
-   * Start the Firebase Connection
-   * settingsStreamCallback callback to be used if the settings stream changes
-   * returns true if successful, false if there was an error
-   */
-  bool begin(FirebaseData::StreamEventCallback settingsStreamCallback) {
     if (WiFi.status() != WL_CONNECTED) {
       WBF_LOGERROR(F("Can not begin - not connected to WiFi"));
       _running = false;
@@ -78,36 +71,11 @@ class WeatherBirdFirebase {
     } else {
       WBF_LOGINFO(F("Successfully authenticated to Firebase"));
       _running = true;
-      Firebase.setStreamCallback(firebaseSettingsData, settingsStreamCallback, streamTimeoutCallback);
-      String settingsPath = "/stations/" + firebaseStationId + "/settings";
-      if (Firebase.beginStream(firebaseSettingsData, settingsPath)) {
-        _lastError = "";
-      } else {
-        _lastError = firebaseSettingsData.errorReason().c_str();
-        WBF_LOGERROR1(F("Error starting stream for settings update "), firebaseSettingsData.errorReason());
-        // This always errors - but it seems to work in reading the stream
-      }
+      _lastError = "";
       waitForSync();    // Sync the time to NTP
       WBF_LOGINFO1(F("UTC: "), UTC.dateTime());
     }
     return _running;
-  }
-
-  /**
-   * Callback for timeout on the settings stream
-   */
-  static void streamTimeoutCallback(bool timeout)
-  {
-    if(timeout){
-      Serial.println(F("Stream timeout, resume streaming..."));
-    }  
-  }
-  
-  /**
-   * Default for when the settings data changes
-   */
-  static void defaultSettingsStreamCallback(StreamData data) {
-    WBF_LOGDEBUG1(F("Settings have changed for path "), data.dataPath());
   }
 
   /**
@@ -116,8 +84,8 @@ class WeatherBirdFirebase {
   void end() {
     if (!_running) {
       WBF_LOGERROR(F("No end - firebase not running"));
+      return;
     }
-    Firebase.endStream(firebaseSettingsData);
     Firebase.end(firebaseData);
     _running = false;
     WBF_LOGINFO(F("Ending Firebase Connection"));
@@ -146,6 +114,48 @@ class WeatherBirdFirebase {
     }
   }
 
+  /**
+   * Get the settings for the station
+   * json - JSON object containing the settings data
+   * return - true if successful
+   */
+  bool refreshSettings() {
+    if (Firebase.get(firebaseData, settingsPath)) {
+      FirebaseJson &json = firebaseData.jsonObject();
+      // Copy to the static JSON object
+      json.toString(settingsJsonString);
+      settingsJson->setJsonData(settingsJsonString);
+      return true;
+    } else {
+      WBF_LOGERROR1(F("Error getting settings: "), firebaseData.errorReason());
+      return false;
+    }
+  }
+
+  int getIntSetting(const String& path) {
+    FirebaseJsonData jsonData;
+    settingsJson->get(jsonData, path);
+    if (jsonData.typeNum == FirebaseJson::JSON_INT) {
+      return jsonData.intValue;
+    } else {
+      _lastError = "Invalid return type for settings int";
+      WBF_LOGERROR(_lastError.c_str());
+      return -1;
+    }
+  }
+
+  bool getBoolSetting(const String& path) {
+    FirebaseJsonData jsonData;
+    settingsJson->get(jsonData, path);
+    if (jsonData.typeNum == FirebaseJson::JSON_BOOL) {
+      return jsonData.boolValue;
+    } else {
+      _lastError = "Invalid return type for settings bool";
+      WBF_LOGERROR(_lastError.c_str());
+      return -1;
+    }
+  }
+
   void loop() {
     events();  // This is for the timer facility
   }
@@ -153,11 +163,13 @@ class WeatherBirdFirebase {
   private:
   bool _running = false;  // begin was successfully called
   FirebaseData firebaseData;  // Used for generic requests
-  FirebaseData firebaseSettingsData; // Used for reading station settings
   FirebaseAuth *firebaseAuth;
   FirebaseConfig *firebaseConfig;
   String firebaseStationId;
   std::string _lastError;
+  String settingsPath;
+  String settingsJsonString;
+  FirebaseJson*  settingsJson = new FirebaseJson();
 
   /* The helper function to get the token status string - copied from Firebase-ESP8266 license MIT */
   String getTokenStatus(struct token_info_t info) {

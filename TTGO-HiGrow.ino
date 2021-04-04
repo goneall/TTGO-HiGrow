@@ -10,7 +10,7 @@
 #include "secret.h"
 
 #define WBP_DEBUG_OUTPUT      Serial
-#define CORE_DEBUG_LEVEL=5
+//#define CORE_DEBUG_LEVEL=5
 #define _WBP_LOGLEVEL_        4
 #define _WBF_LOGLEVEL_        4
 #define LED_BUILTIN       16         // GPIO 16 for the TTGO-HiGrow
@@ -79,81 +79,33 @@ boolean startFirebase() {
   firebaseConfig.api_key = FIREBASE_API_KEY;
   firebaseAuth.user.email = provisioningManager->getStationEmail();
   firebaseAuth.user.password = provisioningManager->getStationPassword();
-  return firebase->begin(settingsStreamCallback);
+  return firebase->begin();
 }
 
 /**
- * Callback for when the settings data changes
+ * Updates the soil sensor min and max from the Firebase soil sensor data
  */
-void settingsStreamCallback(StreamData data) {
-  if (data.dataPath() == minSoilPath) {
-    if (data.dataType() == "int") {
-      minSoilThreshold = data.intData();
-      Serial.print(F("Soil min updated to "));
-      Serial.println(minSoilThreshold);
-    } else {
-      Serial.println(F("Invalid data type for min soil path"));
-    }
-  } else if (data.dataPath() == maxSoilPath) {
-    if (data.dataType() == "int") {
-      maxSoilThreshold = data.intData();
-      Serial.print(F("Soil max updated to "));
-      Serial.println(maxSoilThreshold);
-    } else {
-      Serial.println(F("Invalid data type for max soil path"));
-    }
-  } else if (data.dataPath() == waterEnabledPath) {
-    if (data.dataType() == "boolean") {
-      waterEnabled = data.boolData();
-      Serial.print(F("Water enabled updated to "));
-      Serial.println(waterEnabled);
-    } else {
-      Serial.println(F("Invalid data type for water enabled path"));
-    }
-  } else if (data.dataPath() == "/") {
-    if (data.dataType() == "json") {
-      FirebaseJson &json = data.jsonObject();
-      String jsonStr;
-      json.toString(jsonStr, true);
-      Serial.println(jsonStr);
-      FirebaseJsonData jsonData;
-      json.get(jsonData, minSoilPath);
-      if (jsonData.typeNum == FirebaseJson::JSON_INT) {
-        minSoilThreshold = jsonData.intValue;
-        Serial.print(F("Soil min updated to "));
-        Serial.println(minSoilThreshold);
-      } else {
-        Serial.println("Invalid json type for minValue");
-      }
-      json.get(jsonData, maxSoilPath);
-      if (jsonData.typeNum == FirebaseJson::JSON_INT) {
-        maxSoilThreshold = jsonData.intValue;
-        Serial.print(F("Soil max updated to "));
-        Serial.println(maxSoilThreshold);
-      } else {
-        Serial.println("Invalid json type for maxValue");
-      }
-      json.get(jsonData, waterEnabledPath);
-      if (jsonData.typeNum == FirebaseJson::JSON_BOOL) {
-        waterEnabled = jsonData.boolValue;
-        Serial.print(F("Water enabled updated to "));
-        Serial.println(waterEnabled);
-      } else {
-        Serial.println(F("Invalid data type for water enabled path"));
-      }
-    } else {
-      Serial.println(F("Invalid data type for root soil path"));
-    }
+void updateSoilMinMax() {
+  if (firebase->refreshSettings()) {
+    minSoilThreshold = firebase->getIntSetting(minSoilPath);
+    Serial.print(F("Soil min updated to "));
+    Serial.println(minSoilThreshold);
+    maxSoilThreshold = firebase->getIntSetting(maxSoilPath);
+    Serial.print(F("Soil max updated to "));
+    Serial.println(maxSoilThreshold);
+    waterEnabled = firebase->getBoolSetting(waterEnabledPath);
+    Serial.print(F("water enabled updated to "));
+    Serial.println(waterEnabled);
   } else {
-    Serial.print("Unexpected path for update: ");
-    Serial.println(data.dataPath());
+    Serial.println("Unable to update soil min/max");
   }
 }
+
 void setup()
 {
     Serial.begin(115200);
     delay(200);
-    esp_log_level_set("*", ESP_LOG_DEBUG);
+//    esp_log_level_set("*", ESP_LOG_DEBUG);
     pinMode(WATER_RELAY_PIN, OUTPUT);
     digitalWrite(WATER_RELAY_PIN, HIGH);
     provisioningManager = new WeatherBirdProvisioningManager(FIREBASE_FUNCTION_URL, LED_BUILTIN, CONFIG_BUTTON);
@@ -184,6 +136,7 @@ void setup()
     } else {
         Serial.println(F("Error initialising BH1750"));
     }
+    updateSoilMinMax();
 }
 
 uint32_t readSalt()
@@ -251,6 +204,7 @@ void checkForWater(uint16_t soil) {
 }
 
 #define FIREBASE_UPDATE_DELAY 300000L   // 5 minutes
+//#define FIREBASE_UPDATE_DELAY 30000L   // 30 seconds
 void loop()
 {
     static uint64_t timestamp;
@@ -276,5 +230,6 @@ void loop()
         firebase->updateSensorValue("salt", (float)salt);
         float bat = readBattery();
         firebase->updateSensorValue("battery", (float)bat);
+        updateSoilMinMax();
     }
 }
